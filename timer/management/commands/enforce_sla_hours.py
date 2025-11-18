@@ -13,7 +13,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 import pytz
 
-from timer.models import SLATimer
+from timer.models import SLATimer, Holiday
 
 
 class Command(BaseCommand):
@@ -50,9 +50,31 @@ class Command(BaseCommand):
 
             tz = pytz.timezone('Asia/Kolkata')
             now_local = now_utc.astimezone(tz)
-            start_work = wh.start_hour
-            end_work = wh.end_hour
-            within_hours = start_work <= now_local.time() <= end_work
+
+            # Compute working days list
+            working_days = []
+            wd_raw = getattr(wh, 'working_days', None)
+            if isinstance(wd_raw, str):
+                import json
+                try:
+                    parsed = json.loads(wd_raw)
+                    if isinstance(parsed, list):
+                        working_days = [int(d) for d in parsed]
+                except Exception:
+                    working_days = [int(d.strip()) for d in wd_raw.split(',') if d.strip().isdigit()]
+            elif isinstance(wd_raw, (list, tuple)):
+                try:
+                    working_days = [int(d) for d in wd_raw]
+                except Exception:
+                    working_days = []
+            if not working_days:
+                working_days = [0,1,2,3,4]
+
+            # Determine if now is within working hours considering days/holidays
+            is_working_day = now_local.weekday() in working_days
+            is_holiday = Holiday.objects.filter(working_hours=wh, date=now_local.date()).exists()
+            within_time = wh.start_hour <= now_local.time() <= wh.end_hour
+            within_hours = is_working_day and not is_holiday and within_time
 
             # Active -> Schedule to next working day if outside hours
             if sla.sla_status == 'Active' and not within_hours:

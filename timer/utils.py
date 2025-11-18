@@ -2,7 +2,9 @@
 from datetime import datetime, timedelta
 
 def is_holiday(date, working_hours):
-    return working_hours.holidays.filter(date=date.date()).exists()
+    # Check holidays globally by date, not scoped to specific working_hours
+    from timer.models import Holiday
+    return Holiday.objects.filter(date=date.date()).exists()
 
 
 # def next_working_time(current_time, working_hours):
@@ -148,8 +150,6 @@ def next_working_time(current_time, working_hours):
         working_days = [0, 1, 2, 3, 4]
     
     print(f"[DEBUG next_working_time] Input: {current_time}, Working days: {working_days}, Current weekday: {current_time.weekday()}")
-
-    from timer.utils import is_holiday
 
     # ✅ CRITICAL FIX: If current time is past working hours today, move to next day
     if current_time.time() > working_hours.end_hour:

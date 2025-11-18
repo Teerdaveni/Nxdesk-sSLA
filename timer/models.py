@@ -1,3 +1,5 @@
+
+
 import pdb
 import uuid
 from datetime import datetime, timedelta
@@ -25,18 +27,40 @@ def is_within_working_hours(current_time, working_hours):
     Check if the current_time is within working hours, considering days and holidays.
     """
     if not working_hours:
-        return True  # If no working hours, assume always working
+        # No working hours configured — fall back to default Mon-Fri 09:30-18:30
+        # but still respect holidays recorded in the Holiday table.
+        from datetime import time as _time
+        # If today is a holiday (recorded for any working_hours), treat as non-working
+        try:
+            if Holiday.objects.filter(date=current_time.date()).exists():
+                return False
+        except Exception:
+            # If Holiday table unavailable for any reason, be permissive
+            pass
+
+        # Create a lightweight default working_hours-like object for time checks
+        working_hours = type('WHDefault', (), {})()
+        working_hours.start_hour = _time(9, 30)
+        working_hours.end_hour = _time(18, 30)
+        working_hours.working_days = [0, 1, 2, 3, 4]
 
     ist = pytz.timezone('Asia/Kolkata')
     current_time = current_time.astimezone(ist) if current_time.tzinfo else ist.localize(current_time)
     
     # Check if it's a working day
     weekday = current_time.weekday()  # 0=Monday, 6=Sunday
-    if weekday not in working_hours.working_days:
+    
+    # Handle working_days as either list or comma-separated string
+    working_days = working_hours.working_days
+    if isinstance(working_days, str):
+        # Parse comma-separated string to list of integers
+        working_days = [int(d.strip()) for d in working_days.split(',') if d.strip().isdigit()]
+    
+    if weekday not in working_days:
         return False
     
-    # Check holidays
-    if Holiday.objects.filter(working_hours=working_hours, date=current_time.date()).exists():
+    # Check holidays - check by date only (regardless of which working_hours they're linked to)
+    if Holiday.objects.filter(date=current_time.date()).exists():
         return False
     
     # Check time range
@@ -157,6 +181,9 @@ class Ticket(models.Model):
 
         is_new = self._state.adding  # Check if the ticket is new
 
+        # Allow status changes at any time - remove blocking for Scheduled SLA
+        # Users should be able to update ticket status regardless of working hours/holidays
+        
         super().save(*args, **kwargs) 
         sla_timer, created = SLATimer.objects.get_or_create(ticket=self)
 
@@ -173,8 +200,14 @@ class Ticket(models.Model):
             sla_timer.pause_sla()
 
         elif self.status == "Resolved":
-            sla_timer.end_time = current_time
-            sla_timer.save()
+            # Ensure SLA is stopped when ticket is resolved so timer does not remain Active
+            try:
+                sla_timer.stop_sla()
+            except Exception as e:
+                # Fallback: set end_time and mark stopped
+                sla_timer.end_time = current_time
+                sla_timer.sla_status = 'Stopped'
+                sla_timer.save(update_fields=['end_time', 'sla_status'])
 
         elif self.status == "Delegated":
             pass
@@ -263,54 +296,38 @@ class SLATimer(models.Model):
         start_work = working_hours.start_hour
         end_work = working_hours.end_hour
 
-        if now.time() < start_work:
-            # Before working hours → today at start time
-            next_start = datetime.combine(now.date(), start_work)
-            next_start = tz.localize(next_start) if next_start.tzinfo is None else next_start
-        elif now.time() > end_work:
-            # After working hours → next working day start time
-            next_day = now + timedelta(days=1)
-            next_start = datetime.combine(next_day.date(), start_work)
-            next_start = tz.localize(next_start) if next_start.tzinfo is None else next_start
-            # Use next_working_time to skip weekends/holidays
-            next_start = next_working_time(next_start, working_hours)
+        # ✅ CRITICAL FIX: Always use next_working_time to check holidays
+        # Don't assume current time is valid just because it's within working hours
+        next_start = next_working_time(now, working_hours)
+        
+        # If next_working_time moved us to a different day, use start of that day
+        # Otherwise, use the current time
+        if next_start.date() != now.date():
+            # Moved to next working day, so return that day's start time
+            return next_start
         else:
-            # Within working hours → start now
-            next_start = now
+            # Same day and within working hours, use current time
+            if now.time() < start_work:
+                # Before working hours → today at start time
+                next_start = datetime.combine(now.date(), start_work)
+                next_start = tz.localize(next_start) if next_start.tzinfo is None else next_start
+            elif now.time() > end_work:
+                # This shouldn't happen since next_working_time would have moved to next day
+                # But keep as fallback
+                next_day = now + timedelta(days=1)
+                next_start = datetime.combine(next_day.date(), start_work)
+                next_start = tz.localize(next_start) if next_start.tzinfo is None else next_start
+                next_start = next_working_time(next_start, working_hours)
+            else:
+                # Within working hours on a working day → start now
+                next_start = now
 
         return next_start
 
-        
+   
 
     
-    # place this near top of file, after imports but before class SLATimer
-
     
-
-
-    # def start_sla(self):
-    #     """Start SLA timer when ticket is created."""
-    #     if not self.start_time:
-    #         self.start_time = timezone.now()
-
-    #     response_time = None
-    #     if self.ticket and self.ticket.priority:
-    #         response_time = self.ticket.priority.response_target_time
-    #         print(f"[DEBUG] Response time for priority: {response_time}")
-    #     else:
-    #         print("[DEBUG] No priority or response time found for the ticket.")
-
-    #     # 🧩 Link working hours from organisation
-    #     org_working_hours = getattr(self.ticket.ticket_organization, 'working_hours', None)
-    #     if org_working_hours:
-    #         self.working_hours = org_working_hours
-
-    #     # Calculate and store due date
-    #     self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
-    #     self.sla_status = "Active"
-    #     self.save(update_fields=["start_time", "sla_due_date", "sla_status", "working_hours"])
-    #     print(f"[DEBUG] SLA started for ticket: {self.ticket.ticket_id}, Due Date: {self.sla_due_date}, SLA Status: {self.sla_status}")
-
     def start_sla(self):
         """Start SLA timer based on organization's working hours (IST-based)."""
         from django.utils import timezone
@@ -318,7 +335,9 @@ class SLATimer(models.Model):
         from datetime import datetime, timedelta, time
 
         tz = pytz.timezone("Asia/Kolkata")
-        now = timezone.now().astimezone(tz)
+        # Use ticket creation time as reference, not current time
+        # This ensures SLA calculations are based on when ticket was created
+        now = self.ticket.created_at.astimezone(tz)
 
         # Get working hours first
         working_hours = self.working_hours
@@ -345,9 +364,16 @@ class SLATimer(models.Model):
             self.start_time = next_start
             self.sla_status = 'Scheduled'
             response_time = getattr(self.ticket.priority, "response_target_time", timedelta(hours=8))
-            self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
-            self.save(update_fields=["start_time", "sla_status", "sla_due_date"])
+            
+            # ✅ Store full priority response time in remaining_at_pause
+            self.remaining_at_pause = response_time
+            
+            # Only calculate due date if not already set
+            if not self.sla_due_date:
+                self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+            self.save(update_fields=["start_time", "sla_status", "sla_due_date", "remaining_at_pause"])
             print(f"[TIMER WAIT] SLA scheduled for {next_start}, due {self.sla_due_date}")
+            print(f"[TIMER WAIT] Remaining at pause: {self.remaining_at_pause}")
             return
 
         tz = pytz.timezone("Asia/Kolkata")
@@ -391,8 +417,8 @@ class SLATimer(models.Model):
         print(f"[DEBUG] Working Hours: {start_work} to {end_work}")
         print(f"[DEBUG] Current time is: {now.time()}")
 
-        # 2️⃣ Check if reference time is within working hours
-        if start_work <= now.time() <= end_work:
+        # 2️⃣ Check if reference time is within working hours (including holiday check)
+        if is_within_working_hours(now, working_hours):
             # Calculate remaining time today
             end_time_today = now.replace(hour=end_work.hour, minute=end_work.minute, second=0, microsecond=0)
             remaining_minutes_today = (end_time_today - now).total_seconds() / 60
@@ -413,12 +439,18 @@ class SLATimer(models.Model):
                 self.start_time = next_start
                 self.sla_status = "Scheduled"
                 
-                # ✅ Calculate due date even for scheduled tickets so frontend knows completion time
-                self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+                # ✅ Store full priority response time in remaining_at_pause
+                self.remaining_at_pause = response_time
                 
-                self.save(update_fields=["start_time", "sla_status", "sla_due_date"])
+                # ✅ Calculate due date even for scheduled tickets so frontend knows completion time
+                # Only calculate if not already set
+                if not self.sla_due_date:
+                    self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+                
+                self.save(update_fields=["start_time", "sla_status", "sla_due_date", "remaining_at_pause"])
                 print(f"[TIMER WAIT] SLA will start later at {next_start}")
                 print(f"[TIMER WAIT] Due date will be: {self.sla_due_date}")
+                print(f"[TIMER WAIT] Remaining at pause: {self.remaining_at_pause}")
                 return
             
             # Within working hours with sufficient time → start immediately
@@ -426,7 +458,9 @@ class SLATimer(models.Model):
             self.start_time = reference_time
             self.sla_status = "Active"
             
-            self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+            # Only calculate due date if not already set
+            if not self.sla_due_date:
+                self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
             self.save(update_fields=["start_time", "sla_status", "sla_due_date"])
             
             print(f"[SLA STARTED] Ticket {self.ticket.ticket_id} | Start: {self.start_time} | Due: {self.sla_due_date}")
@@ -440,13 +474,22 @@ class SLATimer(models.Model):
                 self.start_time = next_start
                 self.sla_status = "Scheduled"
                 
-                # ✅ Calculate due date for scheduled tickets
+                # ✅ Store full priority response time in remaining_at_pause
                 response_time = getattr(self.ticket.priority, "response_target_time", timedelta(hours=8))
-                self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+                print(f"[DEBUG] Response time from priority: {response_time}")
+                self.remaining_at_pause = response_time
+                print(f"[DEBUG] Set remaining_at_pause to: {self.remaining_at_pause}")
                 
-                self.save(update_fields=["start_time", "sla_status", "sla_due_date"])
+                # ✅ Calculate due date for scheduled tickets
+                # Only calculate if not already set
+                if not self.sla_due_date:
+                    self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+                    print(f"[DEBUG] Calculated sla_due_date: {self.sla_due_date}")
+                
+                self.save(update_fields=["start_time", "sla_status", "sla_due_date", "remaining_at_pause"])
                 print(f"[TIMER WAIT] SLA will start later at {next_start}")
                 print(f"[TIMER WAIT] Due date will be: {self.sla_due_date}")
+                print(f"[TIMER WAIT] Remaining at pause: {self.remaining_at_pause}")
                 return
             else:
                 # Edge case: next_start is now, start immediately
@@ -454,7 +497,10 @@ class SLATimer(models.Model):
                 self.sla_status = "Active"
                 
                 response_time = getattr(self.ticket.priority, "response_target_time", timedelta(hours=8))
-                self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+                # Only calculate if not already set
+                if not self.sla_due_date:
+                    self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+                
                 self.save(update_fields=["start_time", "sla_status", "sla_due_date"])
                 
                 print(f"[SLA STARTED] Ticket {self.ticket.ticket_id} | Start: {self.start_time} | Due: {self.sla_due_date}")
@@ -515,7 +561,10 @@ class SLATimer(models.Model):
             response_time = self.remaining_at_pause
         else:
             response_time = getattr(self.ticket.priority, "response_target_time", timedelta(hours=8))
-        self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+        
+        # Only calculate if not already set
+        if not self.sla_due_date:
+            self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
 
         self.sla_status = "Active"
         self.remaining_at_pause = None
@@ -532,9 +581,16 @@ class SLATimer(models.Model):
         Pause the SLA timer.
         If auto_schedule=True, transitions to Scheduled (for end-of-day) instead of Paused.
         """
+        # Don't pause if already Scheduled - it already has correct remaining_at_pause
+        if self.sla_status == 'Scheduled':
+            print(f"[DEBUG] Ticket {self.ticket.ticket_id} already Scheduled. Skipping pause.")
+            return
+            
         if self.sla_status == 'Active':
+            # Compute remaining first, then mark paused_time to avoid a tiny skew
+            remaining = self.calculate_remaining_time()
+            self.remaining_at_pause = remaining  # Store remaining time
             self.paused_time = timezone.now()
-            self.remaining_at_pause = self.calculate_remaining_time()  # Store remaining time
 
             if auto_schedule:
                 # Transition to Scheduled for next working day instead of Paused
@@ -552,8 +608,7 @@ class SLATimer(models.Model):
                 next_start = self.get_next_start_time(working_hours)
                 self.start_time = next_start
                 self.sla_status = 'Scheduled'
-                # Store remaining time at pause for next activation
-                self.remaining_at_pause = self.calculate_remaining_time()
+                # remaining already computed above; ensure it's stored
                 self.save(update_fields=['paused_time', 'remaining_at_pause', 'sla_status', 'start_time'])
                 print(f"[AUTO SCHEDULED] SLA scheduled for next working day at {next_start} for Ticket {self.ticket.ticket_id}. Remaining at pause: {self.remaining_at_pause}")
             else:
@@ -605,7 +660,7 @@ class SLATimer(models.Model):
 
         now = timezone.now()
 
-        # Use remaining_at_pause if present, else fallback
+        # Use remaining_at_pause if present, else fallback to full response time
         remaining = self.remaining_at_pause
         if not remaining:
             response_time = None
@@ -613,11 +668,23 @@ class SLATimer(models.Model):
                 response_time = self.ticket.priority.response_target_time
             remaining = response_time
 
+        # Accumulate total paused time for metrics
+        if self.paused_time:
+            try:
+                pause_duration = timezone.now() - self.paused_time
+                if isinstance(pause_duration, timedelta):
+                    self.total_paused_time = (self.total_paused_time or timedelta(0)) + pause_duration
+            except Exception:
+                pass
+
+        # Recalculate due date from now using remaining (always recalc on resume)
         self.sla_due_date = self.calculate_due_from(now, remaining)
+
+        # Clear pause markers and activate
         self.paused_time = None
         self.remaining_at_pause = None
         self.sla_status = 'Active'
-        self.save(update_fields=['sla_due_date', 'sla_status', 'paused_time', 'remaining_at_pause'])
+        self.save(update_fields=['sla_due_date', 'sla_status', 'paused_time', 'remaining_at_pause', 'total_paused_time'])
         print(f"[DEBUG] Resuming SLA for Ticket ID: {self.ticket.ticket_id}. Remaining Time: {remaining}, New Due Date: {self.sla_due_date}")
 
     def calculate_due_from(self, base_time, response_time=None):
@@ -646,8 +713,8 @@ class SLATimer(models.Model):
         current_time = base_time.astimezone(ist)
 
         remaining_hours = response_time.total_seconds() / 3600
-        # Include previously accumulated paused time if any
-        remaining_hours += self.total_paused_time.total_seconds() / 3600
+        # Note: do NOT add self.total_paused_time here — that would inflate the remaining time
+        # The remaining time passed in (response_time or remaining_at_pause) already accounts for pauses.
 
         # Snap to next working time
         current_time = next_working_time(current_time, working_hours)
@@ -696,8 +763,8 @@ class SLATimer(models.Model):
         else:
             start_work, end_work = time(9, 30), time(18, 30)
 
-        # Only consider activating if within working hours
-        if not (start_work <= now.time() <= end_work):
+        # Only consider activating if within working hours (including holiday check)
+        if not is_within_working_hours(now, wh):
             return False
 
         # Check if enough time remains today
@@ -714,7 +781,11 @@ class SLATimer(models.Model):
         # Activate immediately using current time as start
         self.start_time = now
         self.sla_status = 'Active'
-        self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+        
+        # Only calculate if not already set
+        if not self.sla_due_date:
+            self.sla_due_date = self.calculate_sla_due_with_working_hours(response_time)
+        
         self.save(update_fields=['start_time', 'sla_status', 'sla_due_date'])
         print(f"[SLA STARTED NOW] Ticket {self.ticket.ticket_id} | Start: {self.start_time} | Due: {self.sla_due_date}")
         return True
@@ -743,6 +814,10 @@ class SLATimer(models.Model):
 
         if self.sla_status == 'Paused' and self.remaining_at_pause:
             return self.remaining_at_pause
+
+        # If SLA is stopped or breached, remaining time is zero
+        if self.sla_status in ['Stopped', 'Breached']:
+            return timedelta(0)
 
         if not self.sla_due_date:
             return timedelta(0)
@@ -914,7 +989,7 @@ class SLATimer(models.Model):
         print(f"[DEBUG] Start Time (IST): {current_time}")
 
         remaining_hours = response_time.total_seconds() / 3600
-        remaining_hours += self.total_paused_time.total_seconds() / 3600
+        # Do NOT add self.total_paused_time here - that would incorrectly extend the SLA
         print(f"[DEBUG] Remaining Hours: {remaining_hours}")
 
         # ✅ Adjust start time if outside working hours (now in IST)

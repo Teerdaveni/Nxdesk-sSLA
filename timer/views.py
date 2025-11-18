@@ -573,7 +573,14 @@ class dispatcherAPIView(APIView):
         serializer = TicketSerializer(ticket, data=data, partial=True)
 
         if serializer.is_valid():
-            updated_ticket = serializer.save(modified_by=request.user)
+            try:
+                updated_ticket = serializer.save(modified_by=request.user)
+            except ValueError as e:
+                # Handle working hours restriction errors
+                return Response({
+                    "error": str(e),
+                    "error_type": "working_hours_restriction"
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             # Send emails after saving
             if not developer_email:
@@ -688,7 +695,14 @@ class AssignTicketAPIView(APIView):
             # Proceed with the ticket assignment
             serializer = AssignTicketSerializer(ticket, data=request.data, partial=True)
             if serializer.is_valid():
-                serializer.save()
+                try:
+                    serializer.save()
+                except ValueError as e:
+                    # Handle working hours restriction errors
+                    return Response({
+                        "error": str(e),
+                        "error_type": "working_hours_restriction"
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
                 # Send email via Celery
                 if engineer.email:
@@ -869,7 +883,16 @@ class TicketDetailAPIView(APIView):
         # FIXED: Pass request context to serializer
         serializer = TicketSerializer(ticket, data=data, partial=True, context={'request': request})
         if serializer.is_valid():
-            updated_ticket = serializer.save(modified_by=request.user)
+            try:
+                updated_ticket = serializer.save(modified_by=request.user)
+            except ValueError as e:
+                # Handle working hours restriction errors
+                error_message = str(e)
+                return Response({
+                    "error": error_message,
+                    "error_type": "working_hours_restriction",
+                    "current_status": ticket.status
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             # Handle assignee change notifications
             if 'assignee' in data and updated_ticket.assignee != original_assignee:

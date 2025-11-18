@@ -1,0 +1,66 @@
+===============================================================================
+CELERY BEAT SETUP - AUTO PAUSE/RESUME SLA TIMERS
+===============================================================================
+
+Two new Celery periodic tasks have been added to automatically manage SLA timers:
+
+1. **auto_pause_tickets_outside_working_hours**
+   - Runs every 5 minutes
+   - Pauses all active tickets when outside working hours
+   - Schedules them to resume at next working day
+
+2. **auto_resume_tickets_within_working_hours**
+   - Runs every 5 minutes
+   - Activates scheduled tickets when working hours begin
+   - Skips tickets waiting for user response
+
+===============================================================================
+HOW TO RUN CELERY BEAT
+===============================================================================
+
+Open a NEW terminal and run:
+
+   celery -A Ticketing_tool beat --loglevel=info
+
+This will start the Celery Beat scheduler that runs the periodic tasks.
+
+===============================================================================
+FULL SETUP (3 TERMINALS NEEDED)
+===============================================================================
+
+Terminal 1 - Daphne (WebSocket Server):
+   daphne -b 0.0.0.0 -p 8000 Ticketing_tool.asgi:application
+
+Terminal 2 - Celery Worker:
+   celery -A Ticketing_tool worker --pool=solo --loglevel=info
+
+Terminal 3 - Celery Beat (NEW):
+   celery -A Ticketing_tool beat --loglevel=info
+
+===============================================================================
+WHAT HAPPENS NOW
+===============================================================================
+
+✅ Every 5 minutes, Celery Beat will:
+   - Check all active tickets
+   - Pause any that are outside working hours (9:30 AM - 1:25 PM)
+   - Schedule them to resume at next working day (skipping weekends)
+   
+✅ Every 5 minutes, Celery Beat will also:
+   - Check all scheduled tickets
+   - Activate any that are now within working hours
+   - Start their SLA timers automatically
+
+✅ No manual scripts needed anymore!
+
+===============================================================================
+ALTERNATIVE: Run Celery Beat with Worker (Single Command)
+===============================================================================
+
+Instead of running 2 separate Celery commands, you can run them together:
+
+   celery -A Ticketing_tool worker --beat --pool=solo --loglevel=info
+
+This runs both the worker AND beat scheduler in one process.
+
+===============================================================================

@@ -98,6 +98,43 @@ class TicketSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Assignee does not exist.")
         return value
     
+    def validate_status(self, value):
+        """Prevent status changes during holidays or non-working hours."""
+        # Only validate on update (when instance exists)
+        if self.instance:
+            try:
+                from timer.models import SLATimer, is_within_working_hours
+                from django.utils import timezone
+                import pytz
+                
+                sla_timer = SLATimer.objects.filter(ticket=self.instance).first()
+                if sla_timer:
+                    # Check if we're currently within working hours
+                    working_hours = sla_timer.working_hours
+                    if not working_hours and self.instance.ticket_organization:
+                        working_hours = getattr(self.instance.ticket_organization, 'working_hours', None)
+                    
+                    if working_hours:
+                        tz = pytz.timezone('Asia/Kolkata')
+                        now = timezone.now().astimezone(tz)
+                        
+                        # Block status changes if outside working hours or on holiday
+                        if not is_within_working_hours(now, working_hours):
+                            # Check if status is actually changing
+                            if self.instance.status != value:
+                                raise serializers.ValidationError(
+                                    "Status changes are not allowed during holidays or non-working hours. "
+                                    "Please try again during working hours."
+                                )
+            except serializers.ValidationError:
+                # Re-raise validation errors
+                raise
+            except Exception as e:
+                # If any other error occurs during validation, log it but allow the change
+                print(f"[ERROR] Status validation failed: {e}")
+                pass
+        return value
+    
     def get_assignee_role(self, obj):
         role = UserRole.objects.filter(user=obj.assignee, is_active=True).first()
         return role.role.name if role else None

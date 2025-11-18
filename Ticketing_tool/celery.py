@@ -31,6 +31,24 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 # Load task modules from all registered Django app configs.
 app.autodiscover_tasks()
 
+# Celery Beat Schedule for periodic tasks
+from celery.schedules import crontab
+
+app.conf.beat_schedule = {
+    'auto-pause-tickets-every-5-minutes': {
+        'task': 'timer.tasks.auto_pause_tickets_outside_working_hours',
+        'schedule': 300.0,  # Run every 5 minutes (300 seconds)
+    },
+    'auto-resume-tickets-every-5-minutes': {
+        'task': 'timer.tasks.auto_resume_tickets_within_working_hours',
+        'schedule': 300.0,  # Run every 5 minutes (300 seconds)
+    },
+    'auto-pause-waiting-tickets-every-2-minutes': {
+        'task': 'timer.tasks.auto_pause_waiting_for_user_response',
+        'schedule': 120.0,  # Run every 2 minutes (120 seconds)
+    },
+}
+
 @app.task(bind=True)
 def debug_task(self):
     print('Request: {0!r}'.format(self.request))

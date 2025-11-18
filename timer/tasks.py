@@ -902,3 +902,139 @@ def send_ticket_reassignment_email(ticket_id, assignee_email, reassigned_by):
         error_msg = f"Failed to send reassignment emails for ticket {ticket_id}: {str(e)}"
         logger.error(error_msg)
         return error_msg
+
+
+@shared_task
+def auto_pause_tickets_outside_working_hours():
+    """
+    Periodically check all active tickets and pause/schedule them if outside working hours.
+    This task should run every 5-10 minutes via Celery Beat.
+    """
+    from timer.utils import is_within_working_hours
+    import pytz
+    
+    ist = pytz.timezone('Asia/Kolkata')
+    now = timezone.now().astimezone(ist)
+    
+    # Get all active SLA timers
+    active_slas = SLATimer.objects.filter(
+        sla_status='Active',
+        is_active=True
+    ).select_related('ticket', 'ticket__ticket_organization__working_hours', 'working_hours')
+    
+    paused_count = 0
+    
+    for sla in active_slas:
+        ticket = sla.ticket
+        if not ticket or not ticket.ticket_id:
+            continue
+        
+        # Get working hours
+        wh = sla.working_hours
+        if not wh and ticket.ticket_organization:
+            wh = ticket.ticket_organization.working_hours
+        
+        if not wh:
+            continue
+        
+        # Check if within working hours
+        try:
+            within_hours = is_within_working_hours(now, wh)
+            
+            if not within_hours:
+                # Pause and schedule for next working day
+                sla.pause_sla(auto_schedule=True)
+                paused_count += 1
+                logger.info(f"[AUTO-PAUSE] Paused ticket {ticket.ticket_id} - outside working hours")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to check/pause ticket {ticket.ticket_id}: {e}")
+    
+    if paused_count > 0:
+        logger.info(f"[AUTO-PAUSE] Paused {paused_count} ticket(s) outside working hours")
+    
+    return f"Paused {paused_count} tickets"
+
+
+@shared_task
+def auto_resume_tickets_within_working_hours():
+    """
+    Periodically check all scheduled/paused tickets and activate them if within working hours.
+    This task should run every 5-10 minutes via Celery Beat.
+    """
+    from timer.utils import is_within_working_hours
+    import pytz
+    
+    ist = pytz.timezone('Asia/Kolkata')
+    now = timezone.now().astimezone(ist)
+    
+    # Get all scheduled SLA timers
+    scheduled_slas = SLATimer.objects.filter(
+        sla_status='Scheduled',
+        is_active=True
+    ).select_related('ticket', 'ticket__ticket_organization__working_hours', 'working_hours')
+    
+    activated_count = 0
+    
+    for sla in scheduled_slas:
+        ticket = sla.ticket
+        if not ticket or not ticket.ticket_id:
+            continue
+        
+        # Skip if ticket is waiting for user response
+        if str(ticket.status).lower() == "waiting for user response":
+            continue
+        
+        # Get working hours
+        wh = sla.working_hours
+        if not wh and ticket.ticket_organization:
+            wh = ticket.ticket_organization.working_hours
+        
+        if not wh:
+            continue
+        
+        # Check if within working hours
+        try:
+            within_hours = is_within_working_hours(now, wh)
+            
+            if within_hours:
+                # Activate scheduled SLA
+                sla.activate_scheduled_sla()
+                activated_count += 1
+                logger.info(f"[AUTO-RESUME] Activated ticket {ticket.ticket_id} - within working hours")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to check/activate ticket {ticket.ticket_id}: {e}")
+    
+    if activated_count > 0:
+        logger.info(f"[AUTO-RESUME] Activated {activated_count} ticket(s) within working hours")
+    
+    return f"Activated {activated_count} tickets"
+
+
+@shared_task
+def auto_pause_waiting_for_user_response():
+    """
+    Periodically check all active tickets and pause them if status is 'Waiting for User Response'.
+    This ensures tickets waiting for user action don't continue consuming SLA time.
+    """
+    # Get all active SLA timers with "Waiting for User Response" status
+    from timer.models import Ticket
+    
+    waiting_tickets = Ticket.objects.filter(status__icontains='waiting for user')
+    
+    paused_count = 0
+    
+    for ticket in waiting_tickets:
+        try:
+            sla = SLATimer.objects.filter(ticket=ticket, is_active=True).first()
+            if sla and sla.sla_status == 'Active':
+                # Pause the SLA
+                sla.pause_sla()
+                paused_count += 1
+                logger.info(f"[AUTO-PAUSE-WAITING] Paused ticket {ticket.ticket_id} - waiting for user response")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to pause ticket {ticket.ticket_id}: {e}")
+    
+    if paused_count > 0:
+        logger.info(f"[AUTO-PAUSE-WAITING] Paused {paused_count} ticket(s) waiting for user response")
+    
+    return f"Paused {paused_count} tickets waiting for user response"
