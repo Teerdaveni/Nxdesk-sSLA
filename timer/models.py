@@ -19,6 +19,8 @@ from login_details.models import User
 import random,string
 from project_details.models import ProjectsDetails
 from .utils import next_working_time
+from whatsapp_notifications.service import notify_user
+
 
 
 
@@ -184,7 +186,28 @@ class Ticket(models.Model):
         # Allow status changes at any time - remove blocking for Scheduled SLA
         # Users should be able to update ticket status regardless of working hours/holidays
         
-        super().save(*args, **kwargs) 
+        super().save(*args, **kwargs)
+        # -------------------------------
+# WhatsApp Notification: New Ticket
+# -------------------------------
+        # -------------------------------
+# WhatsApp Notification: New Ticket
+# -------------------------------
+        if is_new and self.assignee and self.assignee.mobile:
+            from whatsapp_notifications.service import notify_user
+
+            message = (
+                f"🆕 New Ticket Assigned\n"
+                f"ID: {self.ticket_id}\n"
+                f"Summary: {self.summary}\n"
+                f"Status: {self.status}"
+            )
+
+            print(">>> Sending WhatsApp message to:", self.assignee.mobile)
+            status, response = notify_user(self.assignee.mobile, message)
+            print(">>> WhatsApp API Response:", status, response)
+
+
         sla_timer, created = SLATimer.objects.get_or_create(ticket=self)
 
         # Start SLA timer if the status is "open"
@@ -796,9 +819,13 @@ class SLATimer(models.Model):
 
     # 4️⃣ Stop SLA
     def stop_sla(self):
+        # Store remaining time before stopping
+        if self.sla_status == 'Active':
+            self.remaining_at_pause = self.calculate_remaining_time()
+        
         self.sla_status = 'Stopped'
         self.end_time = timezone.now()
-        self.save()
+        self.save(update_fields=['sla_status', 'end_time', 'remaining_at_pause'])
 
 
    
@@ -815,8 +842,10 @@ class SLATimer(models.Model):
         if self.sla_status == 'Paused' and self.remaining_at_pause:
             return self.remaining_at_pause
 
-        # If SLA is stopped or breached, remaining time is zero
+        # If SLA is stopped or breached, show remaining time at the moment it was stopped/breached
         if self.sla_status in ['Stopped', 'Breached']:
+            if self.remaining_at_pause:
+                return self.remaining_at_pause
             return timedelta(0)
 
         if not self.sla_due_date:

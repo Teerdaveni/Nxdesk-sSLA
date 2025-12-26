@@ -3,6 +3,9 @@ import os
 
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent.parent
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # Security settings
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-+hi)_oc5b4amw)o&%mk__mykl=5#v9f8lyf1oy1of%7$cg3z2(')  # Use an environment variable in production
@@ -48,6 +51,8 @@ INSTALLED_APPS = [
     'django_celery_results',
     'cloudinary_storage',
     'cloudinary',
+    'whatsapp_notifications',
+    # ["whatsapp_notifications.apps.WhatsappNotificationsConfig"]
 ]
 
 MIDDLEWARE = [
@@ -236,3 +241,10 @@ CLOUDINARY_STORAGE = {
 }
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+
+
+WA_PHONE_NUMBER_ID = os.getenv("WA_PHONE_NUMBER_ID")
+WA_ACCESS_TOKEN = os.getenv("WA_ACCESS_TOKEN")
+WA_VERIFY_TOKEN = os.getenv("WA_VERIFY_TOKEN")
+# WA_VERIFY_TOKEN = os.getenv("WA_VERIFY_TOKEN")
+WA_API_VERSION = os.getenv("WA_API_VERSION", "v18.0")

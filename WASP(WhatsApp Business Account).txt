@@ -1,0 +1,46 @@
+WASP(WhatsApp Business Account)
+Create App
+
+Go to developers.facebook.com → Create App → Select “Business” → Add app name & contact. 
+Facebook Developers
+
+Add WhatsApp product
+
+In App Dashboard add WhatsApp (Cloud API). This generates the “WhatsApp” product panel. 
+Facebook Developers
+
+Create or connect a WhatsApp Business Account (WABA) and phone number
+
+In the WhatsApp product panel, follow steps to create or connect a WABA and add a phone number (test or production). You’ll get a phone_number_id and WhatsApp Business Account ID. 
+Facebook Developers
+
+https://developers.facebook.com/apps/
+
+
+STEP 2 — Create a New App
+
+On the Apps page:
+
+Click “Create App” (top right).
+
+Choose “Business” (important).
+
+Click Next.
+
+Enter:
+
+App Name → e.g., TicketingToolNotifications
+
+Contact Email
+
+Leave Business Account as default (or choose if you already have one)
+
+Click Create App.
+
+
+
+access_token : EAATXVtUQlGwBQK5Ki3EiMfw2vE6JoX4mUYtYDcdfQJOpNNXfAuQy2kJ0RqiIKrcgZCNbVdDNOrllbCbbsU1c2F3fUejvKZAOIaYrhgNzwJYjAYo1yj1B92b7pFR0Tce5ApyEpsJFUde6ansTy7gzVQ5WgHR5o7GhQIfEnjdlnZAg0Nx9eQ0amVG71VwVfhQ6YJaXm1mxoHexoFiU9RsFb7ao5I5RBNJTS1GLRvWAsZAaD4wFUXmfTo17LPo4w7PQFK6vOW3ZArVPRvsEk6ZCcX40ZBA
+
+Phone Number ID: 955560004297002
+📌 WhatsApp Business Account ID: 1403651394480923
+

@@ -22,6 +22,7 @@ urlpatterns = [
     path('five_notifications/', include('five_notifications.urls')),
     path('ticket/', include('history.urls')),
     path('services/', include('services.urls')),
+    path("notifications/", include("whatsapp_notifications.urls")),
 ]
 
 # ✅ Serve media files in production (DEBUG = False)

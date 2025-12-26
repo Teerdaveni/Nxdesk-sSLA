@@ -14,6 +14,29 @@ class User(AbstractUser):
     id = models.AutoField(primary_key=True)
     is_customer = models.BooleanField(default=False)
     email = models.EmailField(unique=True)
+    mobile = models.CharField(max_length=15, null=True, blank=True, unique=True)
+
+    def save(self, *args, **kwargs):
+    # Clean mobile number before saving
+        if self.mobile:
+            # Remove non-digit characters
+            clean = ''.join(filter(str.isdigit, self.mobile))
+
+            # Remove leading zeros (e.g., 099 -> 99)
+            clean = clean.lstrip('0')
+
+            # Add country code if missing
+            if len(clean) == 10:  # Indian number without country code
+                clean = "91" + clean
+
+            # Prevent wrong length
+            if len(clean) < 12:  # 91 + 10 digits
+                print("⚠️ Warning: Invalid mobile number format")
+
+            self.mobile = clean  # Save cleaned number
+
+        super().save(*args, **kwargs)
+
 
     # Avoid related_name clash
     groups = models.ManyToManyField(
