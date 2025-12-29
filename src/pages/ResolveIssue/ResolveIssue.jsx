@@ -1,5 +1,5 @@
-  // --- WebSocket-based Chat Implementation ---
-  
+// --- WebSocket-based Chat Implementation ---
+
 
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
@@ -52,7 +52,7 @@ export default function ResolveIssue() {
   const { ticketId } = useParams();
   const navigate = useNavigate();
   const userProfile = useSelector((state) => state.userProfile.user);
- 
+
   const [ticket, setTicket] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -91,12 +91,14 @@ export default function ResolveIssue() {
 
   useEffect(() => {
     if (!ticketId) return;
-  const accessToken = localStorage.getItem("access_token");
-  const ws = new window.WebSocket(`ws://192.168.0.174:8000/ws/ticket/${ticketId}/?token=${accessToken}`);
-  chatWsRef.current = ws;
+    const accessToken = localStorage.getItem("access_token");
+    const ws = new window.WebSocket(`ws://127.0.0.1:8000/ws/ticket/${ticketId}/?token=${accessToken}`);
+    // const ws = new window.WebSocket(`ws://192.168.0.230:8080/ws/ticket/${ticketId}/?token=${accessToken}`);
+    chatWsRef.current = ws;
 
     ws.onopen = () => {
       console.log("Connected to chat");
+      console.log("WebSocket Instance:", ws);
     };
 
     ws.onmessage = (event) => {
@@ -124,7 +126,7 @@ export default function ResolveIssue() {
       }
     };
 
-   
+
 
     ws.onerror = (err) => {
       console.error("Chat WebSocket error:", err);
@@ -140,11 +142,11 @@ export default function ResolveIssue() {
   }, [ticketId]);
 
   const sendChatMessage = () => {
-    console.log("Sending message:", chatInput); 
-        console.log("WebSocket readyState:", chatWsRef.current.readyState);
-        console.log("Current User ID:", currentUserId);
-        console.log("WebSocket instance:", chatWsRef.current);
-        
+    console.log("Sending message:", chatInput);
+    console.log("WebSocket readyState:", chatWsRef.current.readyState);
+    console.log("Current User ID:", currentUserId);
+    console.log("WebSocket instance:", chatWsRef.current);
+
     if (!chatInput.trim() || !chatWsRef.current || !currentUserId) return;
 
     if (chatWsRef.current.readyState !== 1) {
@@ -152,14 +154,14 @@ export default function ResolveIssue() {
       return;
     }
     try {
-      
+
 
       chatWsRef.current.send(
         JSON.stringify({
-            action: "send_message",
-            message: chatInput,
-            user_id: currentUserId,
-          })
+          action: "send_message",
+          message: chatInput,
+          user_id: currentUserId,
+        })
       );
       setChatInput("");
     } catch (err) {
@@ -168,7 +170,7 @@ export default function ResolveIssue() {
     }
   };
 
- 
+
 
   const getFieldIcon = (label) => {
     const iconMap = {
@@ -223,49 +225,78 @@ export default function ResolveIssue() {
     return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
 
+  // Move startSLATimer and stopSLATimer outside of useEffect
+  function startSLATimer() {
+    if (intervalRef.current) return; // Prevent multiple intervals
+    intervalRef.current = setInterval(() => {
+      setRemainingSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+          setSlaExpired(true);
+          setSlaStatus("Expired");
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  function stopSLATimer() {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }
+
   useEffect(() => {
-     const accessToken = localStorage.getItem("access_token");
+    const accessToken = localStorage.getItem("access_token");
     // Connect to Django Channels WebSocket
-    const ws = new window.WebSocket(`ws://192.168.0.174:8000/ws/timer/${ticketId}/?token=${accessToken}`);
+    const ws = new window.WebSocket(`ws://127.0.0.1:8000/ws/timer/${ticketId}/?token=${accessToken}`);
+    // const ws = new window.WebSocket(`ws://192.168.0.230:8080/ws/timer/${ticketId}/?token=${accessToken}`);
     wsRef.current = ws;
- 
+
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-       
-        if (data.action === "timer_init") {
+        console.log("WebSocket Data:", data);
+
+        if (data.action === "timer_init" || data.action === "status_update" || data.action === "timer_update") {
           setSlaStatus(data.sla_status);
+
           // Parse "HH:MM:SS.ssssss" to seconds
           const [h, m, s] = (data.remaining_time || "0:0:0").split(":");
-          const [sec, ms = "0"] = (s || "0").split(".");
+          const [sec] = (s || "0").split(".");
           const totalSeconds = (parseInt(h) || 0) * 3600 + (parseInt(m) || 0) * 60 + (parseInt(sec) || 0);
+
+          console.log(`Setting remainingSeconds to: ${totalSeconds}, SLA Status: ${data.sla_status}`);
           setRemainingSeconds(totalSeconds > 0 ? totalSeconds : 0);
           setSlaExpired(totalSeconds <= 0);
-          if (data.sla_status !== "Paused" && totalSeconds > 0) {
-            startSLATimer();
-          } else {
+
+          if (data.sla_status === "Paused") {
+            console.log("Pausing SLA timer");
             stopSLATimer();
+          } else if (data.sla_status === "Stopped") {
+            console.log("SLA timer stopped");
+            stopSLATimer();
+          } else if (data.sla_status === "Scheduled") {
+            console.log("SLA timer scheduled");
+            stopSLATimer();
+          } else if (data.sla_status === "Running" || data.sla_status === "Active") {
+            console.log("Starting SLA timer");
+            stopSLATimer(); // Stop any existing timer first
+            startSLATimer();
+          } else if (data.sla_status === "Expired") {
+            console.log("SLA timer expired");
+            stopSLATimer();
+            setSlaExpired(true);
           }
-        } else if (data.action === "status_update") {
-    setSlaStatus(data.sla_status);
-    if (data.sla_status === "Paused") {
-        stopSLATimer();
-    } else {
-        // Update remaining seconds from backend
-        const [h, m, s] = (data.remaining_time || "0:0:0").split(":");
-        const [sec] = (s || "0").split(".");
-        const totalSeconds = h*3600 + m*60 + parseInt(sec);
-        setRemainingSeconds(totalSeconds > 0 ? totalSeconds : 0);
-        startSLATimer();
-    }
-}
+        }
       } catch (err) {
         console.error("WebSocket message error:", err);
       }
-    };
-
-    ws.onerror = (err) => {
+    }; ws.onerror = (err) => {
       console.error("WebSocket error:", err);
     };
 
@@ -273,35 +304,11 @@ export default function ResolveIssue() {
       stopSLATimer();
     };
 
-    function startSLATimer() {
-      if (intervalRef.current) return;
-      intervalRef.current = setInterval(() => {
-        setRemainingSeconds((prev) => {
-          if (prev <= 1) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-            setSlaExpired(true);
-            setSlaStatus("Expired");
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-
-    function stopSLATimer() {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    }
-
     // Cleanup on unmount
     return () => {
       if (wsRef.current) wsRef.current.close();
       stopSLATimer();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketId]);
 
   const formatTime = (time) => time.toString().padStart(2, "0");
@@ -432,9 +439,13 @@ export default function ResolveIssue() {
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
-  const handleQuestionToUser = () => {
+
+  const handleQuestionToUser = async () => {
     setIsQuestionModalOpen(true);
+
+    // Only run if SLA update succeeded
   };
+
 
   const handleAssignClick = () => {
     setIsAssignmentModalOpen(true);
@@ -535,18 +546,30 @@ export default function ResolveIssue() {
       setTicket(response.data);
       setEditableStatus(status);
       toast.success(`Status updated to ${status}!`);
+      return true
     } catch (error) {
       console.error("Failed to update status:", error);
       toast.error("Failed to update ticket status");
+      return false;
     }
   };
 
   // Handle Start Work button click
-  const handleStartWork = () => {
-    setNewStatus("Working in Progress");
-    // Add history entry for starting work
+  const handleStartWork = async () => {
+    const success = await setNewStatus("Working in Progress");
+
+    if (!success) {
+      console.warn("Status update failed, stopping workflow.");
+      return; // stop further execution
+    }
+
+    console.log("Status updated successfully.");
+    // continue only if success === true
+    setSlaStatus("Active");
+    startSLATimer();
     addHistoryEntry("Work started on ticket", ticket?.ticket_id);
   };
+
 
   // Function to handle chat updates and add to history
   const handleChatUpdate = (message, messageType = "comment") => {
@@ -597,9 +620,8 @@ export default function ResolveIssue() {
 
   const renderField = (label, value, additionalClasses = "") => {
     const displayValue = value || "N/A";
-    const fieldClasses = `bg-gray-50 border px-2 py-1 cursor-not-allowed outline-none text-sm w-[50%] ${
-      !value ? "italic text-gray-400" : ""
-    } ${additionalClasses}`;
+    const fieldClasses = `bg-gray-50 border px-2 py-1 cursor-not-allowed outline-none text-sm w-[50%] ${!value ? "italic text-gray-400" : ""
+      } ${additionalClasses}`;
 
     const IconComponent = getFieldIcon(label);
 
@@ -668,11 +690,10 @@ export default function ResolveIssue() {
     return (
       <div className="flex h-screen bg-gray-100">
         <div
-          className={`fixed md:static top-0 left-0 h-full z-30 transition-transform duration-300 ease-in-out ${
-            isSidebarOpen
+          className={`fixed md:static top-0 left-0 h-full z-30 transition-transform duration-300 ease-in-out ${isSidebarOpen
               ? "translate-x-0"
               : "-translate-x-full md:translate-x-0"
-          }`}
+            }`}
         >
           <Sidebar />
         </div>
@@ -693,9 +714,8 @@ export default function ResolveIssue() {
         />
       )}
       <div
-        className={`fixed md:static top-0 left-0 h-full z-30 transition-transform duration-300 ease-in-out ${
-          isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-        }`}
+        className={`fixed md:static top-0 left-0 h-full z-30 transition-transform duration-300 ease-in-out ${isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+          }`}
       >
         <Sidebar />
       </div>
@@ -735,26 +755,26 @@ export default function ResolveIssue() {
                 {/* Conditional buttons based on assignee */}
                 {ticket?.assignee?.toLowerCase() ===
                   userProfile?.username?.toLowerCase() && (
-                  <>
-                    {editableStatus !== "Working in Progress" ? (
-                      <button
-                        type="button"
-                        className="border px-4 py-2 text-xs bg-gray-50 text-gray-700 hover:bg-gray-100 whitespace-nowrap rounded"
-                        onClick={handleStartWork}
-                      >
-                        Start Work
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="border px-4 py-2 text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 whitespace-nowrap rounded"
-                        onClick={handleQuestionToUser}
-                      >
-                        User Inputs
-                      </button>
-                    )}
-                  </>
-                )}
+                    <>
+                      {editableStatus !== "Working in Progress" ? (
+                        <button
+                          type="button"
+                          className="border px-4 py-2 text-xs bg-gray-50 text-gray-700 hover:bg-gray-100 whitespace-nowrap rounded"
+                          onClick={handleStartWork}
+                        >
+                          Start Work
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="border px-4 py-2 text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 whitespace-nowrap rounded"
+                          onClick={handleQuestionToUser}
+                        >
+                          User Inputs
+                        </button>
+                      )}
+                    </>
+                  )}
 
                 {/* Default buttons - always show */}
 
@@ -764,9 +784,8 @@ export default function ResolveIssue() {
                   </h2>
                   <div className="text-center">
                     <div
-                      className={`text-4xl font-mono font-bold mb-2 ${
-                        slaExpired ? "text-red-600" : "text-blue-600"
-                      }`}
+                      className={`text-4xl font-mono font-bold mb-2 ${slaExpired ? "text-red-600" : "text-blue-600"
+                        }`}
                     >
                       {slaExpired ? "SLA Expired" : formatSLA(remainingSeconds)}
                     </div>
@@ -904,11 +923,10 @@ export default function ResolveIssue() {
               {tabs.map((tab) => (
                 <button
                   key={tab}
-                  className={`px-4 py-2 font-medium relative transition-all duration-200 ${
-                    currentTab === tab
+                  className={`px-4 py-2 font-medium relative transition-all duration-200 ${currentTab === tab
                       ? "text-blue-700"
                       : "text-gray-600 hover:text-gray-800"
-                  }`}
+                    }`}
                   onClick={() => setCurrentTab(tab)}
                 >
                   {tab}
@@ -1109,14 +1127,14 @@ export default function ResolveIssue() {
                                     {/* Non-previewable Files: Only Download */}
                                     {(isNonPreviewable ||
                                       (!isImage && !isPreviewableDocument)) && (
-                                      <a
-                                        href={fullUrl}
-                                        className="text-blue-500 hover:underline"
-                                        download={fileName}
-                                      >
-                                        Download
-                                      </a>
-                                    )}
+                                        <a
+                                          href={fullUrl}
+                                          className="text-blue-500 hover:underline"
+                                          download={fileName}
+                                        >
+                                          Download
+                                        </a>
+                                      )}
                                   </div>
                                 </td>
                               </tr>
@@ -1158,9 +1176,21 @@ export default function ResolveIssue() {
               chatUIRef.current.fetchMessages(ticket.ticket_id);
             }
           }}
-          onQuestionSent={() => {
+          onQuestionSent={async () => {
             // fetchSLADetails();
+
+            const success = await setNewStatus("Waiting for User Response");
+
+            if (!success) {
+              console.warn("Failed to pause SLA, not stopping timer.");
+              return;
+            }
+            stopSLATimer();
+            setSlaStatus("Paused");
             handleChatUpdate("Question sent to user", "question");
+
+
+
           }}
         />
 
